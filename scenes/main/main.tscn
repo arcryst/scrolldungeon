@@ -1,0 +1,18 @@
+[gd_scene load_steps=4 format=3 uid="uid://d37crcsxog42n"]
+
+[ext_resource type="Script" uid="uid://b8yls0vnsenme" path="res://scenes/main/Main.gd" id="1_iuonh"]
+[ext_resource type="Script" uid="uid://cdjsrpvsp72e" path="res://scripts/game/GameManager.gd" id="2_k2fmo"]
+[ext_resource type="Script" uid="uid://d1i5sx4dy7m7e" path="res://scripts/game/ScrollController.gd" id="2_l3cfh"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_iuonh")
+
+[node name="ScrollController" type="Node2D" parent="."]
+script = ExtResource("2_l3cfh")
+
+[node name="GameManager" type="Node" parent="ScrollController"]
+script = ExtResource("2_k2fmo")
+
+[node name="Camera2D" type="Camera2D" parent="ScrollController"]
+
+[node name="LayerContainer" type="Node2D" parent="ScrollController"]
