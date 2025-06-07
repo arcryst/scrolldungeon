@@ -5,6 +5,7 @@ class_name ScrollController
 @export var scroll_speed: float = 800.0
 @export var layers_visible: int = 5      # Keep more layers loaded
 @export var auto_scroll_enabled: bool = true
+@export var scroll_debounce_time: float = 0.8  # Longer debounce to prevent multiple scrolls
 
 # Camera and layer management
 @onready var camera = $Camera2D
@@ -17,6 +18,7 @@ var max_depth_reached: int = 0           # Track deepest layer created
 var target_scroll_position: float = 0.0
 var is_scrolling: bool = false
 var scroll_input_threshold: float = 50.0
+var last_scroll_time: float = 0.0
 
 # Track viewport size
 var viewport_height: float = 0.0
@@ -24,10 +26,11 @@ var viewport_height: float = 0.0
 # Touch/scroll input tracking
 var touch_start_y: float = 0.0
 var is_touching: bool = false
-var scroll_velocity: float = 0.0
+var drag_start_camera_y: float = 0.0  # Camera position when drag started
 
 signal layer_revealed(layer)
 signal scroll_completed
+signal depth_changed(new_depth)  # New signal for depth changes
 
 func _ready():
 	viewport_height = get_viewport_rect().size.y
@@ -79,59 +82,141 @@ func create_layer_at_depth(depth: int):
 	
 	print("Created layer %d: %s at Y=%d" % [depth, layer.layer_title, int(layer.position.y)])
 
-func _input(event):
+func _unhandled_input(event):
 	handle_scroll_input(event)
 
 func handle_scroll_input(event):
-	# Touch/Mouse input for scrolling
-	if event is InputEventScreenTouch:
+	var current_time = Time.get_ticks_msec() / 1000.0
+	
+	# Simple time-based debouncing for discrete scroll inputs only
+	var can_discrete_scroll = (current_time - last_scroll_time) >= scroll_debounce_time and not is_scrolling
+	
+	# Handle trackpad pan gestures
+	if event is InputEventPanGesture:
+		if can_discrete_scroll:
+			last_scroll_time = current_time
+			if event.delta.y > 0:
+				scroll_to_next_layer()
+			elif event.delta.y < 0:
+				scroll_to_previous_layer()
+		get_viewport().set_input_as_handled()
+		return
+	
+	# Handle mouse wheel
+	elif event is InputEventMouseButton and (event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+		if can_discrete_scroll:
+			match event.button_index:
+				MOUSE_BUTTON_WHEEL_UP:
+					last_scroll_time = current_time
+					scroll_to_previous_layer()
+					get_viewport().set_input_as_handled()
+				MOUSE_BUTTON_WHEEL_DOWN:
+					last_scroll_time = current_time
+					scroll_to_next_layer()
+					get_viewport().set_input_as_handled()
+	
+	# Handle mouse button events for drag detection
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		print("Mouse button event: pressed=%s, position=%s" % [event.pressed, event.position])
 		if event.pressed:
 			start_touch_input(event.position.y)
 		else:
 			end_touch_input(event.position.y)
 	
-	elif event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_LEFT:
-			if event.pressed:
-				start_touch_input(event.position.y)
-			else:
-				end_touch_input(event.position.y)
+	# Handle touch input for mobile
+	elif event is InputEventScreenTouch:
+		print("Screen touch event: pressed=%s, position=%s" % [event.pressed, event.position])
+		if event.pressed:
+			start_touch_input(event.position.y)
+		else:
+			end_touch_input(event.position.y)
 	
+	# Handle drag input for mobile
 	elif event is InputEventScreenDrag:
-		handle_drag_input(event.relative.y)
+		print("Screen drag event: position=%s" % event.position)
+		handle_drag_input(event.position.y)
 	
+	# Handle mouse drag
 	elif event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-		handle_drag_input(event.relative.y)
+		print("Mouse motion event: position=%s, is_touching=%s" % [event.position, is_touching])
+		# Only handle drag if we've already started touching
+		if is_touching:
+			handle_drag_input(event.position.y)
 	
 	# Keyboard shortcuts for testing
 	elif event.is_action_pressed("ui_down"):
-		scroll_to_next_layer()
+		if can_discrete_scroll:
+			last_scroll_time = current_time
+			scroll_to_next_layer()
 	elif event.is_action_pressed("ui_up"):
-		scroll_to_previous_layer()
+		if can_discrete_scroll:
+			last_scroll_time = current_time
+			scroll_to_previous_layer()
 
 func start_touch_input(y_position: float):
+	if is_scrolling:
+		return  # Don't start drag during animations
+		
 	touch_start_y = y_position
 	is_touching = true
-	scroll_velocity = 0.0
+	drag_start_camera_y = camera.position.y
+	print("Started drag: touch_y=%f, camera_y=%f" % [y_position, camera.position.y])
 
 func end_touch_input(y_position: float):
 	if not is_touching:
 		return
 		
 	is_touching = false
-	var swipe_distance = y_position - touch_start_y
 	
-	# Determine if this was a significant swipe
-	if abs(swipe_distance) > scroll_input_threshold:
-		if swipe_distance < 0:  # Swipe up = dig deeper
-			scroll_to_next_layer()
-		else:  # Swipe down = go back up
-			scroll_to_previous_layer()
+	# Calculate which layer we're closest to and snap to it
+	var current_camera_y = camera.position.y
+	var closest_layer_index = round(current_camera_y / viewport_height)
+	
+	print("End drag: camera_y=%f, viewport_height=%f, closest_index=%f" % [current_camera_y, viewport_height, closest_layer_index])
+	
+	# Clamp to valid layer range
+	closest_layer_index = max(0, closest_layer_index)
+	
+	# Ensure we don't go beyond created layers
+	if closest_layer_index > max_depth_reached:
+		closest_layer_index = max_depth_reached
+		# Create more layers if needed
+		for depth in range(max_depth_reached + 1, closest_layer_index + layers_visible):
+			create_layer_at_depth(depth)
+	
+	# Update our current layer index and snap to it
+	current_layer_index = int(closest_layer_index)
+	target_scroll_position = current_layer_index * viewport_height
+	
+	print("Snapping to layer %d at position %f" % [current_layer_index, target_scroll_position])
+	
+	# Update game depth
+	game_manager.current_depth = current_layer_index
+	depth_changed.emit(current_layer_index)
+	
+	# Smooth snap to the nearest layer
+	start_scroll_animation()
+	
+	# Ensure layers exist around our new position
+	ensure_layers_ahead()
+	ensure_layers_behind()
 
-func handle_drag_input(relative_y: float):
-	if not is_touching:
+func handle_drag_input(absolute_y: float):
+	if not is_touching or is_scrolling:
 		return
-	scroll_velocity = relative_y * 0.1
+	
+	# Calculate how far we've dragged from the starting point
+	var drag_distance = absolute_y - touch_start_y
+	
+	# Move camera directly based on drag (inverted for natural feel)
+	var new_camera_y = drag_start_camera_y - drag_distance
+	
+	# Clamp camera position to reasonable bounds
+	var min_y = 0
+	var max_y = max_depth_reached * viewport_height
+	camera.position.y = clamp(new_camera_y, min_y, max_y)
+	
+	print("Dragging: drag_distance=%f, new_camera_y=%f, clamped_y=%f" % [drag_distance, new_camera_y, camera.position.y])
 
 func scroll_to_next_layer():
 	if is_scrolling:
@@ -141,10 +226,9 @@ func scroll_to_next_layer():
 	target_scroll_position = current_layer_index * viewport_height
 	start_scroll_animation()
 	
-	print("Scrolling to layer %d" % current_layer_index)
-	
 	# Update game depth when scrolling to new layer
 	game_manager.current_depth = current_layer_index
+	depth_changed.emit(current_layer_index)
 	
 	# Ensure layers exist ahead
 	ensure_layers_ahead()
@@ -157,10 +241,9 @@ func scroll_to_previous_layer():
 	target_scroll_position = current_layer_index * viewport_height
 	start_scroll_animation()
 	
-	print("Scrolling back to layer %d" % current_layer_index)
-	
 	# Update game depth when scrolling back
 	game_manager.current_depth = current_layer_index
+	depth_changed.emit(current_layer_index)
 	
 	# Ensure layers exist behind
 	ensure_layers_behind()
@@ -182,11 +265,13 @@ func ensure_layers_behind():
 
 func start_scroll_animation():
 	is_scrolling = true
+	
+	# Smooth snap animation
 	var tween = create_tween()
 	tween.set_ease(Tween.EASE_OUT)
-	tween.set_trans(Tween.TRANS_CUBIC)
+	tween.set_trans(Tween.TRANS_QUART)
 	
-	tween.tween_property(camera, "position:y", target_scroll_position, 0.6)
+	tween.tween_property(camera, "position:y", target_scroll_position, 0.3)  # Quick snap
 	tween.tween_callback(finish_scroll_animation)
 
 func finish_scroll_animation():
@@ -215,11 +300,6 @@ func _process(delta):
 	if new_height != viewport_height:
 		viewport_height = new_height
 		update_layer_positions()
-	
-	# Handle scroll velocity
-	if abs(scroll_velocity) > 0.1:
-		camera.position.y += scroll_velocity * delta * 60
-		scroll_velocity *= 0.9
 
 func update_layer_positions():
 	# Update all layer positions based on new viewport height

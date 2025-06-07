@@ -20,14 +20,16 @@ func _ready():
 	# Connect scroll controller signals
 	scroll_controller.layer_revealed.connect(_on_layer_revealed)
 	scroll_controller.scroll_completed.connect(_on_scroll_completed)
+	scroll_controller.depth_changed.connect(_on_depth_changed)
 	
 	print("✅ UI created programmatically!")
 	print("Ready to scroll! Use Down Arrow to dig deeper.")
 
 func _on_layer_revealed(layer):
 	print("🔍 New layer revealed: %s" % layer.layer_title)
-	# Update depth in UI
-	hud._on_depth_changed(game_manager.current_depth)
 
 func _on_scroll_completed():
 	print("📱 Scroll animation completed")
+
+func _on_depth_changed(new_depth: int):
+	hud._on_depth_changed(new_depth)

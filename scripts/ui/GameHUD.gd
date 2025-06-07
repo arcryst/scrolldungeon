@@ -75,7 +75,7 @@ func create_ui_elements():
     
     # Bottom hint text
     var hint_label = Label.new()
-    hint_label.text = "👆 Swipe up to dig deeper • ⬇️ Arrow keys to test"
+    hint_label.text = "👆 Swipe or scroll to navigate • ⬇️ Arrow keys to test"
     hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     hint_label.add_theme_font_size_override("font_size", 16)
     hint_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.7))

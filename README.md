@@ -36,5 +36,6 @@ This game is built with Godot 4.x. To set up the development environment:
 ## Controls
 
 - Swipe Up/Down or use Arrow Keys to navigate layers
+- Use mousewheel/trackpad scroll to move between layers
 - Click/Tap the action button to interact with layers
 - Space to quick-test layers (debug) 
